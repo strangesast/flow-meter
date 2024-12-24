@@ -10,6 +10,9 @@ TODO (aspirational):
 
 
 ```
+# set target
+idf.py set-target esp32
+
 # flash and monitor
 idf.py -p PORT flash monitor
 idf.py -p /dev/cu.usbserial-0001 flash
