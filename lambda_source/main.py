@@ -27,8 +27,12 @@ def handler(event, context):
         start_timestamp = query_params.get("start_timestamp")
         end_timestamp = query_params.get("end_timestamp")
 
-        dt = datetime.now() - timedelta(days=1)
-        ts = int(dt.timestamp())
+        dt1 = datetime.now()
+        dt0 = dt1 - timedelta(minutes=10)
+        ts1, ts0 = int(dt1.timestamp() * 1e3), int(dt0.timestamp() * 1e3)
+
+        start_timestamp = ts0
+        end_timestamp = ts1
 
         # if not device_id:
         #     return {
@@ -38,7 +42,7 @@ def handler(event, context):
 
         # Build the DynamoDB query key condition
         # key_condition = Key("id").eq(device_id)
-        key_condition = Attr("timestamp").gte(ts)
+        # key_condition = Attr("timestamp").gte(ts)
 
         # If timestamp range is provided, add it to the key condition
         # if start_timestamp and end_timestamp:
@@ -50,7 +54,18 @@ def handler(event, context):
         # elif end_timestamp:
         #    key_condition &= Key("timestamp").lte(int(end_timestamp))
 
-        response = table.scan(FilterExpression=key_condition, Limit=100)
+        # response = table.query(
+        #         KeyConditionExpression=key_condition,
+        #         FilterExpression=key_condition,
+        #         , Limit=100
+        # )
+
+        # Query the table with KeyConditionExpression
+        response = table.query(
+            KeyConditionExpression=Key("id").eq("flowmeter/device0/flow")
+            & Key("timestamp").between(start_timestamp, end_timestamp),
+            ScanIndexForward=True,  # True for ascending, False for descending
+        )
 
         # items = [deserialize_item(item) for item in response.get("Items", [])]
         items = response.get("Items", [])

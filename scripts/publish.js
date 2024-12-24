@@ -31,9 +31,9 @@ client.on('connect', async () => {
   console.log(`Getting some flow data...`);
   await client.subscribeAsync(`flowmeter/+/flow`);
   client.on('message', async (topic, message) => {
-    console.log(`Received message on topic "${topic}": ${message}`);
+    console.log(message);
   });
-  await setTimeout(10000);
+  await setTimeout(20 * 1e3);
   await client.unsubscribeAsync(`flowmeter/+/flow`);
 
   console.log(`Closing valves...`);
