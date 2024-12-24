@@ -33,6 +33,8 @@
 
 #define PULSE_INPUT_PIN GPIO_NUM_25
 #define PULSE_INTERVAL_MS 1000
+#define TOGGLE_PIN GPIO_NUM_27
+#define TOGGLE_INTERVAL_MS 1000
 #define MQTT_TOPIC "sdk/test/js"
 #define MQTT_BROKER_URI "mqtts://a3ef0ftua30ffm-ats.iot.us-east-1.amazonaws.com"
 #define MQTT_BROKER_PORT 8883
@@ -46,13 +48,15 @@ extern const uint8_t client_key_pem_end[] asm("_binary_client_key_end");
 extern const uint8_t server_cert_pem_start[] asm("_binary_root_crt_start");
 extern const uint8_t server_cert_pem_end[] asm("_binary_root_crt_end");
 
+const TickType_t xDelay = TOGGLE_INTERVAL_MS / portTICK_PERIOD_MS;
+
+
 static void log_error_if_nonzero(const char *message, int error_code)
 {
     if (error_code != 0) {
         ESP_LOGE(TAG, "Last error %s: 0x%x", message, error_code);
     }
 }
-
 
 static volatile uint32_t pulse_count = 0;
 static SemaphoreHandle_t pulse_mutex;
@@ -67,9 +71,11 @@ static void IRAM_ATTR pulse_isr_handler(void *arg) {
 
 static void pulse_counter_task(void *arg) {
     char message[64];
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    const TickType_t xFrequency = pdMS_TO_TICKS(PULSE_INTERVAL_MS);
 
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(PULSE_INTERVAL_MS));
+        vTaskDelayUntil(&xLastWakeTime, xFrequency);
         if (pulse_mutex && xSemaphoreTake(pulse_mutex, portMAX_DELAY)) {
             snprintf(message, sizeof(message), "Pulse count: %" PRIu32, pulse_count);
             ESP_LOGI(TAG, "%s", message);
@@ -104,16 +110,27 @@ static void setup_pulse_counter(void) {
     xTaskCreate(pulse_counter_task, "pulse_counter_task", 2048, NULL, 10, NULL);
 }
 
-/*
- * @brief Event handler registered to receive MQTT events
- *
- *  This function is called by the MQTT client event loop.
- *
- * @param handler_args user data registered to the event.
- * @param base Event base for the handler(always MQTT Base in this example).
- * @param event_id The id for the received event.
- * @param event_data The data for the event, esp_mqtt_event_handle_t.
- */
+static void toggle_gpio_task(void *arg) {
+    gpio_config_t io_conf = {
+        .mode = GPIO_MODE_OUTPUT,
+        .pin_bit_mask = (1ULL << TOGGLE_PIN),
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    gpio_config(&io_conf);
+
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    const TickType_t xFrequency = pdMS_TO_TICKS(TOGGLE_INTERVAL_MS);
+
+    while (1) {
+        gpio_set_level(TOGGLE_PIN, 1);
+        vTaskDelay(pdMS_TO_TICKS(TOGGLE_INTERVAL_MS / 2));
+        gpio_set_level(TOGGLE_PIN, 0);
+        vTaskDelayUntil(&xLastWakeTime, xFrequency);
+    }
+}
+
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
 {
     ESP_LOGD(TAG, "Event dispatched from event loop base=%s, event_id=%" PRIi32, base, event_id);
@@ -121,7 +138,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     esp_mqtt_client_handle_t client = event->client;
     int msg_id;
 
-    // define a string for each topic name
     const char *topic0 = MQTT_TOPIC;
 
     switch ((esp_mqtt_event_id_t)event_id) {
@@ -129,17 +145,10 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
         msg_id = esp_mqtt_client_subscribe(client, topic0, 0);
         ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
-
-        // msg_id = esp_mqtt_client_subscribe(client, topic1, 1);
-        // ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
-
-        // msg_id = esp_mqtt_client_unsubscribe(client, topic1);
-        // ESP_LOGI(TAG, "sent unsubscribe successful, msg_id=%d", msg_id);
         break;
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
         break;
-
     case MQTT_EVENT_SUBSCRIBED:
         ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
         msg_id = esp_mqtt_client_publish(client, topic0, "data", 0, 0, 0);
@@ -189,7 +198,6 @@ static void mqtt_app_start(void)
 
     ESP_LOGI(TAG, "[APP] Free memory: %" PRIu32 " bytes", esp_get_free_heap_size());
     mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
-    /* The last argument may be used to pass data to the event handler, in this example mqtt_event_handler */
     esp_mqtt_client_register_event(mqtt_client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
     esp_mqtt_client_start(mqtt_client);
 }
@@ -210,12 +218,10 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    /* This helper function configures Wi-Fi or Ethernet, as selected in menuconfig.
-     * Read "Establishing Wi-Fi or Ethernet Connection" section in
-     * examples/protocols/README.md for more information about this function.
-     */
     ESP_ERROR_CHECK(example_connect());
 
     setup_pulse_counter();
     mqtt_app_start();
+
+    xTaskCreate(toggle_gpio_task, "toggle_gpio_task", 2048, NULL, 5, NULL);
 }
