@@ -2,7 +2,7 @@ data "archive_file" "lambda_zip" {
   type        = "zip"
   source_dir  = local.source_dir
   excludes    = ["${local.source_dir}/env"]
-  output_path = "${path.module}/../${var.lambda_file_name}"
+  output_path = "${path.module}/../../../${var.lambda_file_name}"
 }
 
 resource "aws_lambda_function" "example_http_lambda" {
