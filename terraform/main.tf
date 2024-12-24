@@ -4,7 +4,7 @@ locals {
   lambda_handler       = "main.handler"
   lambda_runtime       = "python3.13"
   lambda_file_name     = "lambda_function.zip"
-  lambda_source_dir    = "${path.module}/lambda_source"
+  lambda_source_dir    = "${path.module}/../lambda_source"
 }
 
 provider "aws" {
@@ -175,17 +175,17 @@ data "http" "amazon_root_ca" {
 
 resource "local_file" "aws_root_cert" {
   content  = data.http.amazon_root_ca.response_body
-  filename = "${path.module}/driver/main/root.crt"
+  filename = "${path.module}/../driver/main/root.crt"
 }
 
 resource "local_file" "device_cert" {
   content  = aws_iot_certificate.cert.certificate_pem
-  filename = "${path.module}/driver/main/client.crt"
+  filename = "${path.module}/../driver/main/client.crt"
 }
 
 resource "local_file" "device_key" {
   content  = aws_iot_certificate.cert.private_key
-  filename = "${path.module}/driver/main/client.key"
+  filename = "${path.module}/../driver/main/client.key"
 }
 
 output "mqtt_broker_uri" {
