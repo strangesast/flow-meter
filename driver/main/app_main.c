@@ -40,9 +40,10 @@
 
 #define PULSE_INPUT_PIN GPIO_NUM_25
 #define PULSE_INTERVAL_MS 1000
-#define TOGGLE_PIN GPIO_NUM_27
+#define DIGITAL0 GPIO_NUM_26
+#define DIGITAL1 GPIO_NUM_27
 #define TOGGLE_INTERVAL_MS 10000
-#define MQTT_TOPIC "sdk/test/js"
+#define DEVICE_ID "device0"
 #define MQTT_CLIENT_ID "example_iot_device"
 #define MQTT_BROKER_URI "mqtts://a3ef0ftua30ffm-ats.iot.us-east-1.amazonaws.com"
 #define MQTT_BROKER_PORT 8883
@@ -78,6 +79,7 @@ static void IRAM_ATTR pulse_isr_handler(void *arg)
 
 static void pulse_counter_task(void *arg)
 {
+    char topic[100];
     char message[64];
     TickType_t xLastWakeTime = xTaskGetTickCount();
     const TickType_t xFrequency = pdMS_TO_TICKS(PULSE_INTERVAL_MS);
@@ -89,7 +91,6 @@ static void pulse_counter_task(void *arg)
             gettimeofday(&tv, NULL);
             time_t now = tv.tv_sec;
 
-            // Construct the message to include pulse count and current epoch time
             snprintf(
                 message,
                 sizeof(message),
@@ -99,11 +100,13 @@ static void pulse_counter_task(void *arg)
             );
             ESP_LOGI(TAG, "%s", message);
 
+            snprintf(topic, sizeof(topic), "flowmeter/%s/flow", DEVICE_ID);
+
             if (mqtt_client) {
-                // esp_mqtt_client_enqueue(mqtt_client, MQTT_TOPIC, message, 0, 1, 1, true);
-                esp_mqtt_client_publish(mqtt_client, MQTT_TOPIC, message, 0, 1, 1);
+                // esp_mqtt_client_enqueue(mqtt_client, topic, message, 0, 1, 1, true);
+                esp_mqtt_client_publish(mqtt_client, topic, message, 0, 1, 1);
             }
-            printf("message=%s\r\n", message);
+
             pulse_count = 0;
             xSemaphoreGive(pulse_mutex);
         }
@@ -132,26 +135,20 @@ static void setup_pulse_counter(void)
     xTaskCreate(pulse_counter_task, "pulse_counter_task", 2048, NULL, 10, NULL);
 }
 
-static void toggle_gpio_task(void *arg)
-{
+static void configure_gpio(void) {
+    // Create a bitmask for TOGGLE_PIN, GPIO26, and GPIO27
+    uint64_t pin_mask = (1ULL << DIGITAL0) | (1ULL << DIGITAL1);
+
     gpio_config_t io_conf = {
         .mode = GPIO_MODE_OUTPUT,
-        .pin_bit_mask = (1ULL << TOGGLE_PIN),
+        .pin_bit_mask = pin_mask,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .intr_type = GPIO_INTR_DISABLE
     };
+
+    // Apply the configuration
     gpio_config(&io_conf);
-
-    TickType_t xLastWakeTime = xTaskGetTickCount();
-    const TickType_t xFrequency = pdMS_TO_TICKS(TOGGLE_INTERVAL_MS);
-
-    while (1) {
-        gpio_set_level(TOGGLE_PIN, 1);
-        vTaskDelay(pdMS_TO_TICKS(TOGGLE_INTERVAL_MS / 2));
-        gpio_set_level(TOGGLE_PIN, 0);
-        vTaskDelayUntil(&xLastWakeTime, xFrequency);
-    }
 }
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
@@ -159,23 +156,26 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     ESP_LOGD(TAG, "Event dispatched from event loop base=%s, event_id=%" PRIi32, base, event_id);
     esp_mqtt_event_handle_t event = event_data;
     esp_mqtt_client_handle_t client = event->client;
-    int msg_id;
 
-    const char *topic0 = MQTT_TOPIC;
+    int msg_id;
+    char topic[100];
+
+    snprintf(topic, sizeof(topic), "flowmeter/%s/valve_status", DEVICE_ID);
 
     switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED:
         ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
-        msg_id = esp_mqtt_client_subscribe(client, topic0, 0);
+        // msg_id = esp_mqtt_client_subscribe(client, topic, 0);
+        msg_id = esp_mqtt_client_subscribe_single(client, topic, 0);
         ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
         break;
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
         break;
     case MQTT_EVENT_SUBSCRIBED:
-        ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
-        msg_id = esp_mqtt_client_publish(client, topic0, "data", 0, 0, 0);
-        ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
+        // ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
+        // msg_id = esp_mqtt_client_publish(client, topic0, "data", 0, 0, 0);
+        // ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
         break;
     case MQTT_EVENT_UNSUBSCRIBED:
         ESP_LOGI(TAG, "MQTT_EVENT_UNSUBSCRIBED, msg_id=%d", event->msg_id);
@@ -185,6 +185,16 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         break;
     case MQTT_EVENT_DATA:
         ESP_LOGI(TAG, "MQTT_EVENT_DATA");
+        if (event->topic_len == strlen(topic) && strncmp(event->topic, topic, event->topic_len) == 0) {
+          if (strncmp(event->data, "0", event->data_len) == 0) {
+            gpio_set_level(DIGITAL0, 0);
+            gpio_set_level(DIGITAL1, 0);
+          } else if (strncmp(event->data, "1", event->data_len) == 0) {
+            gpio_set_level(DIGITAL0, 1);
+            gpio_set_level(DIGITAL1, 1);
+          }
+
+        }
         printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
         printf("DATA=%.*s\r\n", event->data_len, event->data);
         break;
@@ -244,12 +254,11 @@ void app_main(void)
     ESP_LOGI(TAG, "Initializing SNTP");
 
     esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
-    config.start = false;                       // start SNTP service explicitly (after connecting)
-    config.server_from_dhcp = true;             // accept NTP offers from DHCP server, if any (need to enable *before* connecting)
-    config.renew_servers_after_new_IP = true;   // let esp-netif update configured SNTP server(s) after receiving DHCP lease
-    config.index_of_first_server = 1;           // updates from server num 1, leaving server 0 (from DHCP) intact
+    config.start = false;
+    config.server_from_dhcp = true;
+    config.renew_servers_after_new_IP = true;
+    // config.index_of_first_server = 1;           // updates from server num 1, leaving server 0 (from DHCP) intact
     config.ip_event_to_renew = IP_EVENT_STA_GOT_IP;
-
 
     esp_netif_sntp_init(&config);
 
@@ -263,8 +272,7 @@ void app_main(void)
     }
 
     setup_pulse_counter();
+    configure_gpio();
 
     mqtt_app_start();
-
-    xTaskCreate(toggle_gpio_task, "toggle_gpio_task", 2048, NULL, 5, NULL);
 }
