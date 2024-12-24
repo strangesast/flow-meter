@@ -33,7 +33,7 @@ resource "aws_iot_policy_attachment" "attachment" {
 resource "aws_iot_topic_rule" "example_rule" {
   name        = "iot_to_dynamodb_rule"
   enabled     = true
-  sql         = "SELECT * FROM '${var.iot_topic}'"
+  sql         = "SELECT * FROM '${var.iot_topic_pattern}'"
   sql_version = "2016-03-23"
 
   dynamodb {

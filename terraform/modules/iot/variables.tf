@@ -1,5 +1,5 @@
-variable "iot_topic" {
-  description = "The IoT topic to subscribe to."
+variable "iot_topic_pattern" {
+  description = "The IoT topic pattern to pass to DynamoDB."
   type        = string
 }
 

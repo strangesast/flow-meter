@@ -1,4 +1,9 @@
-variable "iot_topic" {
+variable "iot_topic_pattern" {
   type    = string
-  default = "sdk/test/js"
+  default = "flowmeter/+/+"
+}
+
+variable "dynamodb_table_name" {
+  type    = string
+  default = "IoTData"
 }

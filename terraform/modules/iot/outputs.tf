@@ -7,5 +7,5 @@ output "mqtt_client_id" {
 }
 
 output "mqtt_topic" {
-  value = var.iot_topic
+  value = var.iot_topic_pattern
 }
