@@ -1,6 +1,13 @@
 resource "aws_apigatewayv2_api" "http_api" {
   name          = "example_http_api"
   protocol_type = "HTTP"
+
+  cors_configuration {
+    allow_headers = ["Content-Type", "Authorization", "X-Amz-Date", "X-Api-Key", "X-Amz-Security-Token"]
+    allow_methods = ["GET", "POST", "OPTIONS", "PUT", "DELETE"]
+    allow_origins = ["*"]
+    max_age       = 3600
+  }
 }
 
 resource "aws_apigatewayv2_integration" "lambda_integration" {
