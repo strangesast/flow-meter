@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Line Chart with D3.js</title>
+    <title>Pulse Counts with Cumulative Graph, Reset, and Averages</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         svg {
@@ -19,86 +19,259 @@
 
         .line {
             fill: none;
-            stroke: steelblue;
             stroke-width: 2px;
+        }
+
+        .pulse-line {
+            stroke: steelblue;
+        }
+
+        .cumulative-line {
+            stroke: orange;
+        }
+
+        .chart-container {
+            margin-bottom: 50px;
+        }
+
+        #reset-button {
+            padding: 10px 20px;
+            font-size: 16px;
+            margin-bottom: 20px;
+            cursor: pointer;
+        }
+
+        /* Styling for the current counts and averages */
+        .current-count, .current-average {
+            font-size: 14px;
+            fill: darkred;
+            font-weight: bold;
+            background: white;
         }
     </style>
 </head>
 <body>
-    <div id="chart"></div>
+    <button id="reset-button">Reset Total Count</button>
+
+    <div class="chart-container">
+        <h2>Pulse Count Over Time</h2>
+        <div id="pulse-chart"></div>
+    </div>
+
+    <div class="chart-container">
+        <h2>Cumulative Pulse Count Over Time</h2>
+        <div id="cumulative-chart"></div>
+    </div>
 
     <script>
+        const MAX_PULSE_COUNT = 100;
         const endpoint = 'https://3e1aoar9hk.execute-api.us-east-1.amazonaws.com/default/';
 
-        const margin = { top: 20, right: 30, bottom: 30, left: 50 };
+        const margin = { top: 20, right: 50, bottom: 30, left: 50 };
         const width = 800 - margin.left - margin.right;
         const height = 400 - margin.top - margin.bottom;
 
-        const svg = d3.select("#chart")
+        // Initialize Reset Time
+        let resetTime = null;
+
+        // Initialize Data Array
+        let data = [];
+
+        // Initialize cumulativeOffset to handle resets
+        let cumulativeOffset = 0;
+
+        // Create Pulse Count SVG
+        const pulseSvg = d3.select("#pulse-chart")
             .append("svg")
             .attr("width", width + margin.left + margin.right)
             .attr("height", height + margin.top + margin.bottom)
             .append("g")
             .attr("transform", `translate(${margin.left},${margin.top})`);
 
-        const x = d3.scaleTime().range([0, width]);
-        const y = d3.scaleLinear().range([height, 0]);
+        // Create Cumulative Count SVG
+        const cumulativeSvg = d3.select("#cumulative-chart")
+            .append("svg")
+            .attr("width", width + margin.left + margin.right)
+            .attr("height", height + margin.top + margin.bottom)
+            .append("g")
+            .attr("transform", `translate(${margin.left},${margin.top})`);
 
-        const xAxis = d3.axisBottom(x);
-        const yAxis = d3.axisLeft(y);
+        // Define Scales for Pulse Chart
+        const xPulse = d3.scaleTime().range([0, width]);
+        const yPulse = d3.scaleLinear().range([height, 0]);
 
-        svg.append("g")
+        // Define Axes for Pulse Chart
+        const xAxisPulse = d3.axisBottom(xPulse);
+        const yAxisPulse = d3.axisLeft(yPulse);
+
+        // Append Axes for Pulse Chart
+        pulseSvg.append("g")
             .attr("class", "x axis")
             .attr("transform", `translate(0,${height})`);
 
-        svg.append("g")
+        pulseSvg.append("g")
             .attr("class", "y axis");
 
-        const line = d3.line()
-            .x(d => x(d.time))
-            .y(d => y(d.pulse_count));
+        // Define Line for Pulse Chart
+        const pulseLine = d3.line()
+            .x(d => xPulse(d.time))
+            .y(d => yPulse(d.pulse_count));
 
-        svg.append("path")
-            .attr("class", "line");
+        // Append Path for Pulse Chart
+        pulseSvg.append("path")
+            .attr("class", "line pulse-line");
 
-        let data = [];
+        // Append Text Element for Current Average Pulse Count
+        const currentAverageText = pulseSvg.append("text")
+            .attr("class", "current-average")
+            .attr("x", width - 10) // Positioned 10px from the right edge
+            .attr("y", 20) // Positioned 20px from the top
+            .attr("text-anchor", "end") // Right-align the text
+            .text("Average: 0"); // Initial text
 
+        // Define Scales for Cumulative Chart
+        const xCumulative = d3.scaleTime().range([0, width]);
+        const yCumulative = d3.scaleLinear().range([height, 0]);
+
+        // Define Axes for Cumulative Chart
+        const xAxisCumulative = d3.axisBottom(xCumulative);
+        const yAxisCumulative = d3.axisLeft(yCumulative);
+
+        // Append Axes for Cumulative Chart
+        cumulativeSvg.append("g")
+            .attr("class", "x axis")
+            .attr("transform", `translate(0,${height})`);
+
+        cumulativeSvg.append("g")
+            .attr("class", "y axis");
+
+        // Define Line for Cumulative Chart
+        const cumulativeLine = d3.line()
+            .x(d => xCumulative(d.time))
+            .y(d => yCumulative(d.cumulative_count));
+
+        // Append Path for Cumulative Chart
+        cumulativeSvg.append("path")
+            .attr("class", "line cumulative-line");
+
+        // Append Text Element for Current Cumulative Count
+        const currentCountText = cumulativeSvg.append("text")
+            .attr("class", "current-count")
+            .attr("x", width - 10) // Positioned 10px from the right edge
+            .attr("y", 20) // Positioned 20px from the top
+            .attr("text-anchor", "end") // Right-align the text
+            .text("Current Count: 0"); // Initial text
+
+        // Function to Fetch and Process Data
         function fetchData() {
             fetch(endpoint)
                 .then(response => response.json())
                 .then(json => {
+                    // Parse and Sort Data
                     data = json.data.map(d => ({
                         time: new Date(d.payload.epoch_time * 1000),
                         pulse_count: +d.payload.pulse_count
                     })).sort((a, b) => a.time - b.time);
 
-                    updateChart();
+                    // Calculate Cumulative Counts
+                    calculateCumulative();
+
+                    updatePulseChart();
+                    updateCumulativeChart();
                 })
                 .catch(error => console.error("Error fetching data:", error));
         }
 
-        function updateChart() {
-            const maxTime = d3.max(data, d => d.time);
-            const minTime = new Date(maxTime.getTime() - 60000); // Show last 60 seconds of data
-
-            data = data.filter(d => d.time >= minTime);
-
-            x.domain([minTime, maxTime]);
-            y.domain([0, d3.max([d3.max(data, d => d.pulse_count), 400])]);
-
-            svg.select(".x.axis")
-                .call(xAxis);
-
-            svg.select(".y.axis")
-                .call(yAxis);
-
-            svg.select(".line")
-                .datum(data)
-                .attr("d", line);
+        // Function to Calculate Cumulative Counts
+        function calculateCumulative() {
+            if (resetTime === null) {
+                // If never reset, start from the beginning
+                data.forEach((d, i) => {
+                    d.cumulative_count = (i === 0 ? 0 : data[i - 1].cumulative_count) + d.pulse_count;
+                });
+            } else {
+                // If reset, calculate cumulative from resetTime
+                data.forEach((d, i) => {
+                    if (d.time < resetTime) {
+                        d.cumulative_count = 0;
+                    } else {
+                        const prev = i === 0 ? { cumulative_count: 0 } : data[i - 1];
+                        d.cumulative_count = (prev.cumulative_count || 0) + d.pulse_count;
+                    }
+                });
+            }
         }
 
+        // Function to Update Pulse Chart
+        function updatePulseChart() {
+            const maxTime = d3.max(data, d => d.time);
+            const minTime = new Date(maxTime.getTime() - 60000); // Last 60 seconds
+
+            // Filter Data for Last 60 Seconds
+            const filteredData = data.filter(d => d.time >= minTime);
+
+            // Update Scales
+            xPulse.domain([minTime, maxTime]);
+            yPulse.domain([0, d3.max([d3.max(filteredData, d => d.pulse_count), MAX_PULSE_COUNT])]);
+
+            // Update Axes
+            pulseSvg.select(".x.axis")
+                .call(xAxisPulse);
+            pulseSvg.select(".y.axis")
+                .call(yAxisPulse);
+
+            // Update Line
+            pulseSvg.select(".pulse-line")
+                .datum(filteredData)
+                .attr("d", pulseLine);
+
+            // Calculate and Update Current Average Pulse Count
+            const totalPulse = d3.sum(filteredData, d => d.pulse_count);
+            const averagePulse = filteredData.length > 0 ? (totalPulse / filteredData.length).toFixed(2) : 0;
+            currentAverageText.text(`Average: ${averagePulse}`);
+        }
+
+        // Function to Update Cumulative Chart
+        function updateCumulativeChart() {
+            const maxTime = d3.max(data, d => d.time);
+            const minTime = new Date(maxTime.getTime() - 60000); // Last 60 seconds
+
+            // Filter Data for Last 60 Seconds
+            const filteredData = data.filter(d => d.time >= minTime);
+
+            // Update Scales
+            xCumulative.domain([minTime, maxTime]);
+            yCumulative.domain([0, d3.max(filteredData, d => d.cumulative_count)]);
+
+            // Update Axes
+            cumulativeSvg.select(".x.axis")
+                .call(xAxisCumulative);
+            cumulativeSvg.select(".y.axis")
+                .call(yAxisCumulative);
+
+            // Update Line
+            cumulativeSvg.select(".cumulative-line")
+                .datum(filteredData)
+                .attr("d", cumulativeLine);
+
+            // Update Current Cumulative Count Text
+            const latestData = filteredData[filteredData.length - 1];
+            const currentCount = latestData ? latestData.cumulative_count : 0;
+            currentCountText.text(`Current Count: ${currentCount}`);
+        }
+
+        // Event Listener for Reset Button
+        document.getElementById("reset-button").addEventListener("click", () => {
+            resetTime = new Date();
+            calculateCumulative();
+            updateCumulativeChart();
+        });
+
+        // Initial Fetch
+        fetchData();
+
+        // Fetch Data Every Second
         setInterval(fetchData, 1000);
     </script>
 </body>
 </html>
-
